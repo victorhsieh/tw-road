@@ -107,8 +107,13 @@ func geocode(w http.ResponseWriter, r *http.Request) {
         output.End = milestones[1]
     }
 
-    encoder := json.NewEncoder(w)
-    if err := encoder.Encode(output); err != nil {
+    if bytes, err := json.Marshal(output); err == nil {
+        if cb := query.Get("cb"); cb != "" {
+            fmt.Fprint(w, cb + "(" + string(bytes) + ");")
+        } else {
+            fmt.Fprint(w, string(bytes))
+        }
+    } else {
         http.Error(w, err.Error(), http.StatusInternalServerError)
     }
 }
