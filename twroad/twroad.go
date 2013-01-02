@@ -64,6 +64,29 @@ func parse(position string) (road string, mileage float32, err error) {
     return
 }
 
+func find_closest_milestone(c appengine.Context, road string, mileage float32, search_forward bool) (*Milestone) {
+    var mileage_cond, order string
+    if search_forward {
+        mileage_cond = "Mileage >="
+        order = "Mileage"
+    } else {
+        mileage_cond = "Mileage <="
+        order = "-Mileage"
+    }
+
+    q := datastore.NewQuery("Milestone").
+        Filter("Road =", road).
+        Filter(mileage_cond, int(mileage)).
+        Order(order).
+        Limit(1)
+
+    var milestones []*Milestone
+    if _, err := q.GetAll(c, &milestones); err != nil || len(milestones) < 1 {
+        return nil
+    }
+    return milestones[0]
+}
+
 func geocode(w http.ResponseWriter, r *http.Request) {
     query := r.URL.Query()
 
@@ -73,23 +96,15 @@ func geocode(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    quantified := int(mileage) - int(mileage) % 500
-
     c := appengine.NewContext(r)
-    q := datastore.NewQuery("Milestone").
-        Filter("Road =", road).
-        Filter("Mileage >=", quantified).
-        Order("Mileage").
-        Limit(2)
-
-    var milestones []*Milestone
-    if _, err := q.GetAll(c, &milestones); err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
+    begin := find_closest_milestone(c, road, mileage, false)
+    if begin == nil {
+        fmt.Fprint(w, `{error:"Not found"}`)
         return
     }
-
-    if len(milestones) < 2 {
-        fmt.Fprint(w, `{}`)
+    end := find_closest_milestone(c, road, mileage, true)
+    if end == nil {
+        fmt.Fprint(w, `{error:"Not found"}`)
         return
     }
 
@@ -98,13 +113,13 @@ func geocode(w http.ResponseWriter, r *http.Request) {
     output.Mileage = int(mileage)
 
     // linear interpolation
-    p := (mileage - float32(milestones[0].Mileage)) / (float32(milestones[1].Mileage) - float32(milestones[0].Mileage))
-    output.Latitude = interpolation(milestones[0].Latitude, milestones[1].Latitude, p)
-    output.Longitude = interpolation(milestones[0].Longitude, milestones[1].Longitude, p)
+    p := (mileage - float32(begin.Mileage)) / (float32(end.Mileage) - float32(begin.Mileage))
+    output.Latitude = interpolation(begin.Latitude, end.Latitude, p)
+    output.Longitude = interpolation(begin.Longitude, end.Longitude, p)
 
     if query.Get("debug") != "" {
-        output.Begin = milestones[0]
-        output.End = milestones[1]
+        output.Begin = begin
+        output.End = end
     }
 
     if bytes, err := json.Marshal(output); err == nil {
