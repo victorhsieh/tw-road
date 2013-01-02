@@ -45,7 +45,7 @@ func interpolation(begin, end, percent float32) float32 {
 func parse(position string) (road string, mileage float32, err error) {
     // Case: 台27線45k+200
     //       台9線136.7K
-    pattern := regexp.MustCompile(`(台\d+線)([0-9.]+)(?:K[ \+]?)(\d+)?`)
+    pattern := regexp.MustCompile(`(台.+線)([0-9.]+)(?:K[ \+]?)(\d+)?`)
     result := pattern.FindStringSubmatch(position)
     if result == nil {
         err = errors.New("Unrecognized pattern")
