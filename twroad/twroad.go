@@ -35,7 +35,7 @@ func init() {
 }
 
 func root(w http.ResponseWriter, r *http.Request) {
-    fmt.Fprint(w, "Hello!")
+    fmt.Fprint(w, "https://github.com/victorhsieh/tw-road")
 }
 
 func interpolation(begin, end, percent float32) float32 {
