@@ -25,8 +25,8 @@ type OutputJson struct {
     Mileage int `json:"mileage"`
     Latitude float32 `json:"latitude"`
     Longitude float32 `json:"longitude"`
-    Begin *Milestone `json:"begin,omitempty"`
-    End *Milestone `json:"end,omitempty"`
+    Endpoint1 *Milestone `json:"endpoint1,omitempty"`
+    Endpoint2 *Milestone `json:"endpoint2,omitempty"`
 }
 
 func init() {
@@ -38,8 +38,8 @@ func root(w http.ResponseWriter, r *http.Request) {
     fmt.Fprint(w, "https://github.com/victorhsieh/tw-road")
 }
 
-func interpolation(begin, end, percent float32) float32 {
-    return begin + (end - begin) * percent
+func interpolation(endpoint1, endpoint2, percent float32) float32 {
+    return endpoint1 + (endpoint2 - endpoint1) * percent
 }
 
 func parse(position string) (road string, mileage float32, err error) {
@@ -64,7 +64,7 @@ func parse(position string) (road string, mileage float32, err error) {
     return
 }
 
-func find_closest_milestone(c appengine.Context, road string, mileage float32, search_forward bool) (*Milestone) {
+func find_closest_milestone(ctx appengine.Context, road string, mileage float32, search_forward bool, channel chan *Milestone) {
     var mileage_cond, order string
     if search_forward {
         mileage_cond = "Mileage >="
@@ -81,10 +81,11 @@ func find_closest_milestone(c appengine.Context, road string, mileage float32, s
         Limit(1)
 
     var milestones []*Milestone
-    if _, err := q.GetAll(c, &milestones); err != nil || len(milestones) < 1 {
-        return nil
+    if _, err := q.GetAll(ctx, &milestones); err != nil || len(milestones) < 1 {
+        channel <- nil
+        return
     }
-    return milestones[0]
+    channel <- milestones[0]
 }
 
 func geocode(w http.ResponseWriter, r *http.Request) {
@@ -96,15 +97,13 @@ func geocode(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    c := appengine.NewContext(r)
-    begin := find_closest_milestone(c, road, mileage, false)
-    if begin == nil {
-        fmt.Fprint(w, `{error:"Not found"}`)
-        return
-    }
-    end := find_closest_milestone(c, road, mileage, true)
-    if end == nil {
-        fmt.Fprint(w, `{error:"Not found"}`)
+    channel := make(chan *Milestone)
+    ctx := appengine.NewContext(r)
+    go find_closest_milestone(ctx, road, mileage, false, channel)
+    go find_closest_milestone(ctx, road, mileage, true, channel)
+    endpoint1, endpoint2 := <-channel, <-channel
+    if endpoint1 == nil || endpoint2 == nil {
+        fmt.Fprintf(w, `{error:"Not found", debug: "end %f"}`, mileage)
         return
     }
 
@@ -112,14 +111,19 @@ func geocode(w http.ResponseWriter, r *http.Request) {
     output.Road = road
     output.Mileage = int(mileage)
 
-    // linear interpolation
-    p := (mileage - float32(begin.Mileage)) / (float32(end.Mileage) - float32(begin.Mileage))
-    output.Latitude = interpolation(begin.Latitude, end.Latitude, p)
-    output.Longitude = interpolation(begin.Longitude, end.Longitude, p)
+    if endpoint1.Mileage != endpoint2.Mileage {
+        // linear interpolation
+        p := (mileage - float32(endpoint1.Mileage)) / (float32(endpoint2.Mileage) - float32(endpoint1.Mileage))
+        output.Latitude = interpolation(endpoint1.Latitude, endpoint2.Latitude, p)
+        output.Longitude = interpolation(endpoint1.Longitude, endpoint2.Longitude, p)
+    } else {
+        output.Latitude = endpoint1.Latitude
+        output.Longitude = endpoint1.Longitude
+    }
 
     if query.Get("debug") != "" {
-        output.Begin = begin
-        output.End = end
+        output.Endpoint1 = endpoint1
+        output.Endpoint2 = endpoint2
     }
 
     if bytes, err := json.Marshal(output); err == nil {
